@@ -1,0 +1,102 @@
+// ─────────────────────────────────────────────────────
+// Jenkinsfile.docker — Docker build + push pipeline
+// Requirements: Docker, credentials 'ghcr-token' in Jenkins
+// ─────────────────────────────────────────────────────
+
+pipeline {
+    agent any
+
+    environment {
+        REGISTRY      = 'ghcr.io'
+        IMAGE_NAME    = "ghcr.io/${env.GITHUB_OWNER ?: 'hugpaim'}/${env.JOB_NAME.toLowerCase()}"
+        IMAGE_TAG     = "${env.GIT_COMMIT[0..7]}"
+        DOCKER_CREDS  = credentials('ghcr-token')
+    }
+
+    options {
+        timestamps()
+        timeout(time: 30, unit: 'MINUTES')
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+    }
+
+    stages {
+
+        stage('Checkout') {
+            steps {
+                checkout scm
+                echo "Building commit: ${env.GIT_COMMIT[0..7]}"
+            }
+        }
+
+        stage('Lint') {
+            steps {
+                sh '''
+                    echo "Running linters..."
+                    # Add your linter here — e.g. flake8, hadolint
+                    docker run --rm -i hadolint/hadolint < Dockerfile || true
+                '''
+            }
+        }
+
+        stage('Build') {
+            steps {
+                sh """
+                    docker build \
+                        --build-arg BUILD_DATE=\$(date -u +"%Y-%m-%dT%H:%M:%SZ") \
+                        --build-arg GIT_COMMIT=${env.GIT_COMMIT[0..7]} \
+                        -t ${env.IMAGE_NAME}:${env.IMAGE_TAG} \
+                        -t ${env.IMAGE_NAME}:latest \
+                        .
+                """
+            }
+        }
+
+        stage('Test') {
+            steps {
+                sh """
+                    docker run --rm \
+                        ${env.IMAGE_NAME}:${env.IMAGE_TAG} \
+                        python -m pytest --tb=short || true
+                """
+            }
+        }
+
+        stage('Push') {
+            when {
+                branch 'main'
+            }
+            steps {
+                sh """
+                    echo \${DOCKER_CREDS_PSW} | \
+                        docker login ${env.REGISTRY} -u \${DOCKER_CREDS_USR} --password-stdin
+                    docker push ${env.IMAGE_NAME}:${env.IMAGE_TAG}
+                    docker push ${env.IMAGE_NAME}:latest
+                """
+            }
+        }
+
+        stage('Deploy') {
+            when {
+                branch 'main'
+            }
+            steps {
+                echo "Add deploy step here — e.g. SSH, kubectl, docker compose pull"
+                // sh "ssh user@server 'docker compose pull && docker compose up -d'"
+            }
+        }
+
+    }
+
+    post {
+        always {
+            sh "docker rmi ${env.IMAGE_NAME}:${env.IMAGE_TAG} || true"
+            sh "docker rmi ${env.IMAGE_NAME}:latest || true"
+        }
+        success {
+            echo "✅ Pipeline succeeded — image: ${env.IMAGE_NAME}:${env.IMAGE_TAG}"
+        }
+        failure {
+            echo "❌ Pipeline failed — check logs above"
+        }
+    }
+}

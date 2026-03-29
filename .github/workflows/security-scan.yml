@@ -1,0 +1,62 @@
+name: Security Scan
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '0 6 * * 1'   # every Monday at 06:00 UTC
+
+jobs:
+
+  # ── Filesystem / repo scan ─────────────────────────
+  scan-repo:
+    name: 🔒 Repo Scan (Trivy)
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Trivy — filesystem scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type:    fs
+          scan-ref:     .
+          severity:     HIGH,CRITICAL
+          format:       sarif
+          output:       trivy-fs.sarif
+          exit-code:    0   # don't fail on findings — upload first
+
+      - name: Upload SARIF to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-fs.sarif
+
+  # ── Docker image scan ──────────────────────────────
+  scan-image:
+    name: 🐳 Image Scan (Trivy)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    needs: scan-repo
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image for scanning
+        run: docker build -t scan-target:${{ github.sha }} .
+
+      - name: Run Trivy — image scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref:    scan-target:${{ github.sha }}
+          severity:     HIGH,CRITICAL
+          format:       table
+          exit-code:    1   # fail on HIGH/CRITICAL in image
+
+      - name: Clean up image
+        if: always()
+        run: docker rmi scan-target:${{ github.sha }} || true

@@ -1,0 +1,84 @@
+// ─────────────────────────────────────────────────────
+// Jenkinsfile.python — Python CI pipeline
+// Requirements: Python 3.11+ available on Jenkins agent
+// ─────────────────────────────────────────────────────
+
+pipeline {
+    agent {
+        docker {
+            image 'python:3.12-slim'
+            args  '-u root'
+        }
+    }
+
+    options {
+        timestamps()
+        timeout(time: 20, unit: 'MINUTES')
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+    }
+
+    stages {
+
+        stage('Install') {
+            steps {
+                sh '''
+                    pip install --upgrade pip
+                    pip install -r requirements.txt
+                    pip install flake8 black isort pytest pytest-cov
+                '''
+            }
+        }
+
+        stage('Lint') {
+            parallel {
+                stage('flake8') {
+                    steps {
+                        sh 'flake8 . --max-line-length=100 --exclude=.venv,build,dist'
+                    }
+                }
+                stage('black') {
+                    steps {
+                        sh 'black --check .'
+                    }
+                }
+                stage('isort') {
+                    steps {
+                        sh 'isort --check-only .'
+                    }
+                }
+            }
+        }
+
+        stage('Test') {
+            steps {
+                sh '''
+                    pytest \
+                        --cov=. \
+                        --cov-report=xml:coverage.xml \
+                        --cov-report=term-missing \
+                        --junitxml=test-results.xml \
+                        -v
+                '''
+            }
+            post {
+                always {
+                    junit          'test-results.xml'
+                    publishHTML(target: [
+                        allowMissing:          false,
+                        alwaysLinkToLastBuild: true,
+                        keepAll:               true,
+                        reportDir:             'htmlcov',
+                        reportFiles:           'index.html',
+                        reportName:            'Coverage Report'
+                    ])
+                }
+            }
+        }
+
+    }
+
+    post {
+        success { echo "✅ All checks passed" }
+        failure { echo "❌ CI failed — check logs above" }
+    }
+}
