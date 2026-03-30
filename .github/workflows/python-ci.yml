@@ -27,7 +27,6 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install -r requirements.txt
           pip install flake8 black isort pytest pytest-cov
 
       - name: Lint — flake8
