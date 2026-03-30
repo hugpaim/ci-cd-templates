@@ -46,10 +46,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check for Dockerfile
+        id: check
+        run: echo "has_dockerfile=$(test -f Dockerfile && echo 'true' || echo 'false')" >> $GITHUB_OUTPUT
+
       - name: Build image for scanning
+        if: steps.check.outputs.has_dockerfile == 'true'
         run: docker build -t scan-target:${{ github.sha }} .
 
       - name: Run Trivy — image scan
+        if: steps.check.outputs.has_dockerfile == 'true'
         uses: aquasecurity/trivy-action@master
         with:
           image-ref:    scan-target:${{ github.sha }}
@@ -58,5 +64,5 @@ jobs:
           exit-code:    1   # fail on HIGH/CRITICAL in image
 
       - name: Clean up image
-        if: always()
+        if: always() && steps.check.outputs.has_dockerfile == 'true'
         run: docker rmi scan-target:${{ github.sha }} || true
